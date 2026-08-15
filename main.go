@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,30 +12,63 @@ import (
 	"syscall"
 	"time"
 
+	_ "github.com/lib/pq" // Postgres Driver
 	"github.com/oopbest/task-app/handlers"
 	"github.com/oopbest/task-app/middleware"
 	"github.com/oopbest/task-app/repository"
 )
 
 func main() {
-	// 1. อ่าน Port จาก Environment Variable (ถ้าไม่มีให้ใช้ค่าเริ่มต้น 8080)
+	// 1. อ่านค่า Config จาก Environment Variables
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	// 2. สร้าง In-Memory Repository และ Handlers (Dependency Injection)
-	repo := repository.NewMemoryTaskRepository()
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		// Connection String ไปยัง PostgreSQL ใน Docker
+		dbURL = "postgres://postgres:mysecretpassword@localhost:5432/taskdb?sslmode=disable"
+	}
+
+	// 2. เชื่อมต่อฐานข้อมูล PostgreSQL
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatalf("Database connection error: %v", err)
+	}
+	defer db.Close()
+
+	// ตั้งค่า Connection Pool
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	// ทดสอบการเชื่อมต่อ
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer pingCancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		log.Fatalf("Failed to connect to PostgreSQL: %v", err)
+	}
+	log.Println("🐘 Connected to PostgreSQL database successfully!")
+
+	// 3. สร้าง PostgreSQL Repository
+	repo, err := repository.NewPostgresTaskRepository(db)
+	if err != nil {
+		log.Fatalf("Failed to initialize repository: %v", err)
+	}
+
+	// 4. สร้าง Handlers (ส่ง Postgres Repo เข้าไป)
 	taskHandler := handlers.NewTaskHandler(repo)
 
-	// 3. กำหนด Router
+	// 5. กำหนด Router
 	mux := http.NewServeMux()
 
 	// Health Check
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "ok",
-			"time":   time.Now().Format(time.RFC3339),
+			"status":   "ok",
+			"database": "postgres",
+			"time":     time.Now().Format(time.RFC3339),
 		})
 	})
 
@@ -45,10 +79,10 @@ func main() {
 	mux.HandleFunc("PUT /tasks/{id}", taskHandler.UpdateTask)
 	mux.HandleFunc("DELETE /tasks/{id}", taskHandler.DeleteTask)
 
-	// 4. สวม Middleware
+	// 6. สวม Middleware
 	handlerWithMiddleware := middleware.Logging(middleware.JSONContentType(mux))
 
-	// 5. สร้าง HTTP Server
+	// 7. ตั้งค่า HTTP Server
 	server := &http.Server{
 		Addr:         ":" + port,
 		Handler:      handlerWithMiddleware,
@@ -56,25 +90,23 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	// 6. รัน Server ใน Goroutine ย่อย (Background) เพื่อไม่ให้บล็อกการรอรับสัญญาณ Shutdown
+	// 8. รัน Server ใน Background Goroutine
 	go func() {
 		fmt.Println("==================================================")
-		fmt.Printf("🚀 Server is running on http://localhost:%s\n", port)
+		fmt.Printf("🚀 Task API (PostgreSQL) is running on http://localhost:%s\n", port)
 		fmt.Println("==================================================")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}
 	}()
 
-	// 7. ดักจับสัญญาณ Shutdown (Ctrl+C หรือ SIGTERM)
+	// 9. ดักจับสัญญาณ Shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-	// บรรทัดนี้จะรอ (Block) จนกว่าจะมีสัญญาณปิดส่งเข้ามา
 	<-quit
 	log.Println("🛑 Shutdown signal received, shutting down gracefully...")
 
-	// ให้เวลา 5 วินาทีในการเคลียร์ Request เก่าที่ยังทำงานค้างอยู่
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
