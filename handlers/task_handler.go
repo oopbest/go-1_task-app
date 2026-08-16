@@ -34,15 +34,41 @@ func respondError(w http.ResponseWriter, status int, message string) {
 	respondJSON(w, status, map[string]string{"error": message})
 }
 
-// GetAllTasks ดึงเฉพาะ Task ของ User คนนั้น
+// GetAllTasks ดึงรายการ Task ตามเงื่อนไข Query Parameters (Search, Filter, Sort, Pagination)
 func (h *TaskHandler) GetAllTasks(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserIDFromContext(r.Context())
 	if !ok {
 		respondError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
-	tasks := h.repo.GetAll(userID)
-	respondJSON(w, http.StatusOK, tasks)
+	// 1. อ่าน Query Parameters จาก URL
+	query := r.URL.Query()
+	page, _ := strconv.Atoi(query.Get("page"))
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	search := query.Get("search")
+	sortBy := query.Get("sort")
+	order := query.Get("order")
+	var completed *bool
+	if completedStr := query.Get("completed"); completedStr != "" {
+		if c, err := strconv.ParseBool(completedStr); err == nil {
+			completed = &c
+		}
+	}
+	filter := models.TaskFilter{
+		Page:      page,
+		Limit:     limit,
+		Search:    search,
+		Completed: completed,
+		SortBy:    sortBy,
+		Order:     order,
+	}
+	// 2. เรียก Repository
+	result, err := h.repo.GetAll(userID, filter)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Failed to fetch tasks")
+		return
+	}
+	respondJSON(w, http.StatusOK, result)
 }
 
 // GetTaskByID ดึง Task ตาม ID (เฉพาะของ User ตัวเอง)

@@ -18,7 +18,7 @@ func TestTaskHandler_GetAllTasks(t *testing.T) {
 	handler := NewTaskHandler(repo)
 
 	// จำลอง Request พร้อม Context ที่มี UserID = 1
-	req := httptest.NewRequest(http.MethodGet, "/tasks", nil)
+	req := httptest.NewRequest(http.MethodGet, "/tasks?page=1&limit=10", nil)
 	ctx := context.WithValue(req.Context(), middleware.UserIDContextKey, 1)
 	req = req.WithContext(ctx)
 
@@ -29,13 +29,16 @@ func TestTaskHandler_GetAllTasks(t *testing.T) {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
 	}
 
-	var tasks []models.Task
-	if err := json.Unmarshal(rr.Body.Bytes(), &tasks); err != nil {
+	var response models.PaginatedTasks
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
 		t.Fatalf("failed to decode response JSON: %v", err)
 	}
 
-	if len(tasks) < 2 {
-		t.Errorf("expected at least 2 seed tasks, got %d", len(tasks))
+	if len(response.Data) < 2 {
+		t.Errorf("expected at least 2 seed tasks, got %d", len(response.Data))
+	}
+	if response.Page != 1 || response.Limit != 10 {
+		t.Errorf("expected page 1, limit 10; got page %d, limit %d", response.Page, response.Limit)
 	}
 }
 

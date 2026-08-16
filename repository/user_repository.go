@@ -3,7 +3,6 @@ package repository
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 
 	"github.com/oopbest/task-app/models"
 )
@@ -22,23 +21,9 @@ type PostgresUserRepository struct {
 	db *sql.DB
 }
 
-// NewPostgresUserRepository Constructor พร้อมสร้างตาราง users อัตโนมัติ
-func NewPostgresUserRepository(db *sql.DB) (*PostgresUserRepository, error) {
-	repo := &PostgresUserRepository{db: db}
-
-	query := `
-	CREATE TABLE IF NOT EXISTS users (
-		id SERIAL PRIMARY KEY,
-		email VARCHAR(255) UNIQUE NOT NULL,
-		password VARCHAR(255) NOT NULL,
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	);`
-
-	if _, err := db.Exec(query); err != nil {
-		return nil, fmt.Errorf("failed to create users table: %w", err)
-	}
-
-	return repo, nil
+// NewPostgresUserRepository Constructor
+func NewPostgresUserRepository(db *sql.DB) *PostgresUserRepository {
+	return &PostgresUserRepository{db: db}
 }
 
 // Create บันทึก User ใหม่ลงฐานข้อมูล

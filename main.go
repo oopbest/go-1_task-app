@@ -39,29 +39,25 @@ func main() {
 	db.SetMaxIdleConns(25)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
+	// ทดสอบการเชื่อมต่อ Database
 	pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer pingCancel()
 	if err := db.PingContext(pingCtx); err != nil {
 		log.Fatalf("Failed to connect to PostgreSQL: %v", err)
 	}
 	log.Println("🐘 Connected to PostgreSQL database successfully!")
-
-	// 1. สร้าง Repositories
-	userRepo, err := repository.NewPostgresUserRepository(db)
-	if err != nil {
-		log.Fatalf("Failed to initialize user repository: %v", err)
+	// 1. รัน Database Migrations อัตโนมัติ
+	if err := repository.RunMigrations(db); err != nil {
+		log.Fatalf("Database migration failed: %v", err)
 	}
-
-	taskRepo, err := repository.NewPostgresTaskRepository(db)
-	if err != nil {
-		log.Fatalf("Failed to initialize task repository: %v", err)
-	}
-
-	// 2. สร้าง Handlers
+	// 2. สร้าง Repositories
+	userRepo := repository.NewPostgresUserRepository(db)
+	taskRepo := repository.NewPostgresTaskRepository(db)
+	// 3. สร้าง Handlers
 	authHandler := handlers.NewAuthHandler(userRepo)
 	taskHandler := handlers.NewTaskHandler(taskRepo)
 
-	// 3. กำหนด Router
+	// 4. กำหนด Router
 	mux := http.NewServeMux()
 
 	// Public Endpoints
@@ -83,10 +79,10 @@ func main() {
 	mux.Handle("PUT /tasks/{id}", authMW(http.HandlerFunc(taskHandler.UpdateTask)))
 	mux.Handle("DELETE /tasks/{id}", authMW(http.HandlerFunc(taskHandler.DeleteTask)))
 
-	// 4. สวม Global Middleware (JSON + Logging)
+	// 5. สวม Global Middleware (JSON + Logging)
 	handlerWithMiddleware := middleware.Logging(middleware.JSONContentType(mux))
 
-	// 5. ตั้งค่า HTTP Server
+	// 6. ตั้งค่า HTTP Server
 	server := &http.Server{
 		Addr:         ":" + port,
 		Handler:      handlerWithMiddleware,

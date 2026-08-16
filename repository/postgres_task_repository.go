@@ -4,46 +4,69 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 
-	_ "github.com/lib/pq" // ลงทะเบียน Postgres driver
+	_ "github.com/lib/pq"
 	"github.com/oopbest/task-app/models"
 )
 
-// PostgresTaskRepository จัดการข้อมูล Task บนฐานข้อมูล PostgreSQL จริง
 type PostgresTaskRepository struct {
 	db *sql.DB
 }
 
-// NewPostgresTaskRepository Constructor สำหรับสร้าง Repository และสร้าง Table อัตโนมัติถ้ายังไม่มี
-func NewPostgresTaskRepository(db *sql.DB) (*PostgresTaskRepository, error) {
-	repo := &PostgresTaskRepository{db: db}
-
-	// สร้าง Table tasks อัตโนมัติ (Auto Migration แบบง่าย)
-	query := `
-	CREATE TABLE IF NOT EXISTS tasks (
-		id SERIAL PRIMARY KEY,
-		title VARCHAR(255) NOT NULL,
-		description TEXT,
-		completed BOOLEAN NOT NULL DEFAULT FALSE,
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	);
-	ALTER TABLE tasks ADD COLUMN IF NOT EXISTS user_id INT REFERENCES users(id) ON DELETE CASCADE;
-	`
-
-	if _, err := db.Exec(query); err != nil {
-		return nil, fmt.Errorf("failed to create tasks table: %w", err)
-	}
-
-	return repo, nil
+func NewPostgresTaskRepository(db *sql.DB) *PostgresTaskRepository {
+	return &PostgresTaskRepository{db: db}
 }
 
-// GetAll ดึงรายการ Task ทั้งหมดจาก PostgreSQL
-func (r *PostgresTaskRepository) GetAll(userID int) []models.Task {
-	query := `SELECT id, title, description, completed, COALESCE(user_id, 0), created_at FROM tasks WHERE user_id = $1 ORDER BY id ASC`
+// GetAll ดึงรายการ Task ตามเงื่อนไข Search, Filter, Sort และ Pagination
+func (r *PostgresTaskRepository) GetAll(userID int, filter models.TaskFilter) (models.PaginatedTasks, error) {
+	filter.Sanitize()
 
-	rows, err := r.db.Query(query, userID)
+	// 1. สร้างเงื่อนไข WHERE แบบ Dynamic
+	conditions := []string{"user_id = $1"}
+	args := []any{userID}
+	argIdx := 2
+
+	// ค้นหาข้อความใน title หรือ description (ILIKE = Case-insensitive search ใน Postgres)
+	if filter.Search != "" {
+		conditions = append(conditions, fmt.Sprintf("(title ILIKE $%d OR description ILIKE $%d)", argIdx, argIdx))
+		args = append(args, "%"+filter.Search+"%")
+		argIdx++
+	}
+
+	// กรองตามสถานะ completed (ถ้ามีการส่งค่ามา)
+	if filter.Completed != nil {
+		conditions = append(conditions, fmt.Sprintf("completed = $%d", argIdx))
+		args = append(args, *filter.Completed)
+		argIdx++
+	}
+
+	whereClause := strings.Join(conditions, " AND ")
+
+	// 2. นับจำนวนรายการทั้งหมด (Total Items)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM tasks WHERE %s", whereClause)
+	var totalItems int
+	if err := r.db.QueryRow(countQuery, args...).Scan(&totalItems); err != nil {
+		return models.PaginatedTasks{}, err
+	}
+
+	// 3. ดึงรายการข้อมูลตาม Pagination (LIMIT & OFFSET)
+	offset := (filter.Page - 1) * filter.Limit
+	dataQuery := fmt.Sprintf(`
+		SELECT id, title, description, completed, user_id, created_at
+		FROM tasks
+		WHERE %s
+		ORDER BY %s %s
+		LIMIT $%d OFFSET $%d`,
+		whereClause, filter.SortBy, filter.Order, argIdx, argIdx+1,
+	)
+
+	dataArgs := append(args, filter.Limit, offset)
+
+	rows, err := r.db.Query(dataQuery, dataArgs...)
 	if err != nil {
-		return []models.Task{}
+		return models.PaginatedTasks{}, err
 	}
 	defer rows.Close()
 
@@ -56,17 +79,27 @@ func (r *PostgresTaskRepository) GetAll(userID int) []models.Task {
 		tasks = append(tasks, task)
 	}
 
-	// เช็ค error ที่อาจเกิดขึ้นระหว่างการวนลูปอ่าน rows (Best Practice)
 	if err := rows.Err(); err != nil {
-		return []models.Task{}
+		return models.PaginatedTasks{}, err
 	}
 
-	return tasks
+	// 4. คำนวณจำนวนหน้าทั้งหมด (Total Pages)
+	totalPages := 0
+	if totalItems > 0 {
+		totalPages = int(math.Ceil(float64(totalItems) / float64(filter.Limit)))
+	}
+
+	return models.PaginatedTasks{
+		Data:       tasks,
+		Page:       filter.Page,
+		Limit:      filter.Limit,
+		TotalItems: totalItems,
+		TotalPages: totalPages,
+	}, nil
 }
 
-// GetByID ดึงข้อมูล Task ตาม ID
 func (r *PostgresTaskRepository) GetByID(id int, userID int) (models.Task, error) {
-	query := `SELECT id, title, description, completed, COALESCE(user_id, 0), created_at FROM tasks WHERE id = $1 AND user_id = $2`
+	query := `SELECT id, title, description, completed, user_id, created_at FROM tasks WHERE id = $1 AND user_id = $2`
 
 	var task models.Task
 	err := r.db.QueryRow(query, id, userID).Scan(
@@ -88,7 +121,6 @@ func (r *PostgresTaskRepository) GetByID(id int, userID int) (models.Task, error
 	return task, nil
 }
 
-// Create สร้าง Task ใหม่และรับ ID + CreatedAt กลับมาจาก DB
 func (r *PostgresTaskRepository) Create(input models.CreateTaskInput, userID int) models.Task {
 	query := `
 	INSERT INTO tasks (title, description, user_id)
@@ -108,15 +140,12 @@ func (r *PostgresTaskRepository) Create(input models.CreateTaskInput, userID int
 	return task
 }
 
-// Update แก้ไข Task ตาม ID
 func (r *PostgresTaskRepository) Update(id int, input models.UpdateTaskInput, userID int) (models.Task, error) {
-	// 1. ดึงข้อมูลเดิมออกมาก่อน
 	existing, err := r.GetByID(id, userID)
 	if err != nil {
 		return models.Task{}, err
 	}
 
-	// 2. อัปเดตเฉพาะฟิลด์ที่ส่งค่ามา
 	if input.Title != nil {
 		existing.Title = *input.Title
 	}
@@ -127,7 +156,6 @@ func (r *PostgresTaskRepository) Update(id int, input models.UpdateTaskInput, us
 		existing.Completed = *input.Completed
 	}
 
-	// 3. บันทึกลง PostgreSQL
 	query := `
 	UPDATE tasks
 	SET title = $1, description = $2, completed = $3
@@ -151,7 +179,6 @@ func (r *PostgresTaskRepository) Update(id int, input models.UpdateTaskInput, us
 	return updated, nil
 }
 
-// Delete ลบ Task ตาม ID
 func (r *PostgresTaskRepository) Delete(id int, userID int) error {
 	query := `DELETE FROM tasks WHERE id = $1 AND user_id = $2`
 
