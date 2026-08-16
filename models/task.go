@@ -12,6 +12,7 @@ type Task struct {
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	Completed   bool      `json:"completed"`
+	UserID      int       `json:"user_id"` // เพิ่มฟิลด์นี้
 	CreatedAt   time.Time `json:"created_at"`
 }
 

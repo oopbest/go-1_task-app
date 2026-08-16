@@ -8,12 +8,13 @@ import (
 
 func TestMemoryTaskRepository_CRUD(t *testing.T) {
 	repo := NewMemoryTaskRepository()
+	testUserID := 1
 
 	// 1. ทดสอบ Create
 	created := repo.Create(models.CreateTaskInput{
 		Title:       "Test Task",
 		Description: "Testing Description",
-	})
+	}, testUserID)
 
 	if created.ID == 0 {
 		t.Fatalf("expected valid task ID, got 0")
@@ -23,7 +24,7 @@ func TestMemoryTaskRepository_CRUD(t *testing.T) {
 	}
 
 	// 2. ทดสอบ GetByID
-	fetched, err := repo.GetByID(created.ID)
+	fetched, err := repo.GetByID(created.ID, testUserID)
 	if err != nil {
 		t.Fatalf("unexpected error getting task by ID: %v", err)
 	}
@@ -37,7 +38,7 @@ func TestMemoryTaskRepository_CRUD(t *testing.T) {
 	updated, err := repo.Update(created.ID, models.UpdateTaskInput{
 		Title:     &newTitle,
 		Completed: &isDone,
-	})
+	}, testUserID)
 	if err != nil {
 		t.Fatalf("unexpected error updating task: %v", err)
 	}
@@ -46,13 +47,13 @@ func TestMemoryTaskRepository_CRUD(t *testing.T) {
 	}
 
 	// 4. ทดสอบ Delete
-	err = repo.Delete(created.ID)
+	err = repo.Delete(created.ID, testUserID)
 	if err != nil {
 		t.Fatalf("unexpected error deleting task: %v", err)
 	}
 
 	// 5. ตรวจสอบว่า GetByID หลังจากลบแล้วต้องได้ ErrTaskNotFound
-	_, err = repo.GetByID(created.ID)
+	_, err = repo.GetByID(created.ID, testUserID)
 	if err != ErrTaskNotFound {
 		t.Errorf("expected ErrTaskNotFound, got %v", err)
 	}

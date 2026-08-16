@@ -12,14 +12,13 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/lib/pq" // Postgres Driver
+	_ "github.com/lib/pq"
 	"github.com/oopbest/task-app/handlers"
 	"github.com/oopbest/task-app/middleware"
 	"github.com/oopbest/task-app/repository"
 )
 
 func main() {
-	// 1. อ่านค่า Config จาก Environment Variables
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -27,23 +26,19 @@ func main() {
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		// Connection String ไปยัง PostgreSQL ใน Docker
 		dbURL = "postgres://postgres:mysecretpassword@localhost:5432/taskdb?sslmode=disable"
 	}
 
-	// 2. เชื่อมต่อฐานข้อมูล PostgreSQL
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatalf("Database connection error: %v", err)
 	}
 	defer db.Close()
 
-	// ตั้งค่า Connection Pool
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(25)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
-	// ทดสอบการเชื่อมต่อ
 	pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer pingCancel()
 	if err := db.PingContext(pingCtx); err != nil {
@@ -51,19 +46,25 @@ func main() {
 	}
 	log.Println("🐘 Connected to PostgreSQL database successfully!")
 
-	// 3. สร้าง PostgreSQL Repository
-	repo, err := repository.NewPostgresTaskRepository(db)
+	// 1. สร้าง Repositories
+	userRepo, err := repository.NewPostgresUserRepository(db)
 	if err != nil {
-		log.Fatalf("Failed to initialize repository: %v", err)
+		log.Fatalf("Failed to initialize user repository: %v", err)
 	}
 
-	// 4. สร้าง Handlers (ส่ง Postgres Repo เข้าไป)
-	taskHandler := handlers.NewTaskHandler(repo)
+	taskRepo, err := repository.NewPostgresTaskRepository(db)
+	if err != nil {
+		log.Fatalf("Failed to initialize task repository: %v", err)
+	}
 
-	// 5. กำหนด Router
+	// 2. สร้าง Handlers
+	authHandler := handlers.NewAuthHandler(userRepo)
+	taskHandler := handlers.NewTaskHandler(taskRepo)
+
+	// 3. กำหนด Router
 	mux := http.NewServeMux()
 
-	// Health Check
+	// Public Endpoints
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":   "ok",
@@ -71,18 +72,21 @@ func main() {
 			"time":     time.Now().Format(time.RFC3339),
 		})
 	})
+	mux.HandleFunc("POST /auth/register", authHandler.Register)
+	mux.HandleFunc("POST /auth/login", authHandler.Login)
 
-	// Task RESTful Endpoints
-	mux.HandleFunc("GET /tasks", taskHandler.GetAllTasks)
-	mux.HandleFunc("GET /tasks/{id}", taskHandler.GetTaskByID)
-	mux.HandleFunc("POST /tasks", taskHandler.CreateTask)
-	mux.HandleFunc("PUT /tasks/{id}", taskHandler.UpdateTask)
-	mux.HandleFunc("DELETE /tasks/{id}", taskHandler.DeleteTask)
+	// Protected Endpoints (ต้องผ่าน AuthMiddleware)
+	authMW := middleware.AuthMiddleware
+	mux.Handle("GET /tasks", authMW(http.HandlerFunc(taskHandler.GetAllTasks)))
+	mux.Handle("GET /tasks/{id}", authMW(http.HandlerFunc(taskHandler.GetTaskByID)))
+	mux.Handle("POST /tasks", authMW(http.HandlerFunc(taskHandler.CreateTask)))
+	mux.Handle("PUT /tasks/{id}", authMW(http.HandlerFunc(taskHandler.UpdateTask)))
+	mux.Handle("DELETE /tasks/{id}", authMW(http.HandlerFunc(taskHandler.DeleteTask)))
 
-	// 6. สวม Middleware
+	// 4. สวม Global Middleware (JSON + Logging)
 	handlerWithMiddleware := middleware.Logging(middleware.JSONContentType(mux))
 
-	// 7. ตั้งค่า HTTP Server
+	// 5. ตั้งค่า HTTP Server
 	server := &http.Server{
 		Addr:         ":" + port,
 		Handler:      handlerWithMiddleware,
@@ -90,17 +94,15 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	// 8. รัน Server ใน Background Goroutine
 	go func() {
 		fmt.Println("==================================================")
-		fmt.Printf("🚀 Task API (PostgreSQL) is running on http://localhost:%s\n", port)
+		fmt.Printf("🚀 Task API (JWT Auth + Postgres) on http://localhost:%s\n", port)
 		fmt.Println("==================================================")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}
 	}()
 
-	// 9. ดักจับสัญญาณ Shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 

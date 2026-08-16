@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/oopbest/task-app/middleware"
 	"github.com/oopbest/task-app/models"
 	"github.com/oopbest/task-app/repository"
 )
@@ -33,23 +34,31 @@ func respondError(w http.ResponseWriter, status int, message string) {
 	respondJSON(w, status, map[string]string{"error": message})
 }
 
-// GetAllTasks จัดการ GET /tasks
+// GetAllTasks ดึงเฉพาะ Task ของ User คนนั้น
 func (h *TaskHandler) GetAllTasks(w http.ResponseWriter, r *http.Request) {
-	tasks := h.repo.GetAll()
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+	tasks := h.repo.GetAll(userID)
 	respondJSON(w, http.StatusOK, tasks)
 }
 
-// GetTaskByID จัดการ GET /tasks/{id}
+// GetTaskByID ดึง Task ตาม ID (เฉพาะของ User ตัวเอง)
 func (h *TaskHandler) GetTaskByID(w http.ResponseWriter, r *http.Request) {
-	// ดึงค่า id จาก URL path (เช่น /tasks/1 -> "1")
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 	idStr := r.PathValue("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil || id <= 0 {
 		respondError(w, http.StatusBadRequest, "Invalid task ID format")
 		return
 	}
-
-	task, err := h.repo.GetByID(id)
+	task, err := h.repo.GetByID(id, userID)
 	if err != nil {
 		if errors.Is(err, repository.ErrTaskNotFound) {
 			respondError(w, http.StatusNotFound, "Task not found")
@@ -58,51 +67,52 @@ func (h *TaskHandler) GetTaskByID(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
-
 	respondJSON(w, http.StatusOK, task)
 }
 
-// CreateTask จัดการ POST /tasks
+// CreateTask สร้าง Task โดยผูกกับ UserID
 func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 	var input models.CreateTaskInput
-
-	// แปลง JSON Request Body เข้าสู่ struct
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid JSON request body")
 		return
 	}
-
-	// Validate ข้อมูล
 	if err := input.Validate(); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	task := h.repo.Create(input)
-	respondJSON(w, http.StatusCreated, task) // 201 Created
+	task := h.repo.Create(input, userID)
+	respondJSON(w, http.StatusCreated, task)
 }
 
-// UpdateTask จัดการ PUT /tasks/{id}
+// UpdateTask แก้ไข Task (เฉพาะของตัวเอง)
 func (h *TaskHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 	idStr := r.PathValue("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil || id <= 0 {
 		respondError(w, http.StatusBadRequest, "Invalid task ID format")
 		return
 	}
-
 	var input models.UpdateTaskInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid JSON request body")
 		return
 	}
-
 	if err := input.Validate(); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	task, err := h.repo.Update(id, input)
+	task, err := h.repo.Update(id, input, userID)
 	if err != nil {
 		if errors.Is(err, repository.ErrTaskNotFound) {
 			respondError(w, http.StatusNotFound, "Task not found")
@@ -111,20 +121,23 @@ func (h *TaskHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
-
 	respondJSON(w, http.StatusOK, task)
 }
 
-// DeleteTask จัดการ DELETE /tasks/{id}
+// DeleteTask ลบ Task (เฉพาะของตัวเอง)
 func (h *TaskHandler) DeleteTask(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 	idStr := r.PathValue("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil || id <= 0 {
 		respondError(w, http.StatusBadRequest, "Invalid task ID format")
 		return
 	}
-
-	if err := h.repo.Delete(id); err != nil {
+	if err := h.repo.Delete(id, userID); err != nil {
 		if errors.Is(err, repository.ErrTaskNotFound) {
 			respondError(w, http.StatusNotFound, "Task not found")
 			return
@@ -132,7 +145,6 @@ func (h *TaskHandler) DeleteTask(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "Internal server error")
 		return
 	}
-
 	respondJSON(w, http.StatusOK, map[string]string{
 		"message": "Task deleted successfully",
 	})

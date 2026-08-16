@@ -1,18 +1,25 @@
-# 📝 Task Management REST API (Go Zero to Hero — Project 1)
+# 📝 Task Management REST API (Go Zero to Hero)
 
-RESTful API สำหรับจัดการรายการงาน (Task Management) ที่พัฒนาด้วยภาษา **Go (Golang)** โดยใช้ Standard Library (`net/http`) ล้วน ๆ เพื่อเรียนรู้พื้นฐานและโครงสร้างสถาปัตยกรรมโค้ดที่สะอาด (Clean Layered Architecture)
+RESTful API สำหรับจัดการงานแบบ **Multi-User** ที่พัฒนาด้วยภาษา **Go (Golang)** เชื่อมต่อฐานข้อมูล **PostgreSQL** พร้อมระบบรักษาความปลอดภัยด้วย **JWT (JSON Web Token)** และออกแบบตามหลักการ **Clean Layered Architecture** 🚀
 
 ---
 
 ## ✨ Features
 
-- ⚡ **CRUD Operations**: สร้าง (Create), เรียกดู (Read), แก้ไข (Update), และลบ (Delete) รายการ Task
-- 🔒 **Thread-Safe In-Memory Storage**: จัดการข้อมูลในหน่วยความจำอย่างปลอดภัยในสภาวะ Concurrency ด้วย `sync.RWMutex`
-- 🛣️ **Modern Go 1.22+ Routing**: ใช้ `http.NewServeMux` พร้อม Path Parameters (`/tasks/{id}`)
-- 🛡️ **Custom Middleware**:
-  - `Logging`: บันทึก Request Method, Path, Status Code และ Latency
-  - `JSONContentType`: ตั้งค่า `Content-Type: application/json` ให้อัตโนมัติทุก Request
-- 🎯 **Clean Architecture**: แบ่งแยกหน้าที่ของโค้ดชัดเจน (`models`, `repository`, `handlers`, `middleware`)
+- 🔐 **User Authentication (JWT & Bcrypt)**:
+  - สมัครสมาชิก (`/auth/register`) และเข้าสู่ระบบ (`/auth/login`)
+  - เข้ารหัสผ่านอย่างปลอดภัยด้วย `bcrypt`
+  - ยืนยันตัวตนด้วย `JWT (JSON Web Token)` มีอายุ 24 ชั่วโมง
+- 👥 **Multi-User Task Management**: แยกข้อมูลงานของผู้ใช้แต่ละคนอย่างเด็ดขาด (งานใครงานมัน)
+- ⚡ **Full CRUD Operations**: สร้าง (Create), ดูรายการ (Read), แก้ไข (Update), และลบ (Delete) งานของตัวเอง
+- 🐘 **PostgreSQL Database & Connection Pool**: จัดการ Connection Pool ด้วย `database/sql` และรันบน Docker Compose
+- 🛡️ **Middleware Pipeline**:
+  - `AuthMiddleware`: ตรวจสอบ Bearer Token และฝาก `user_id` เข้า Request Context
+  - `Logging`: บันทึก Method, Path, Status Code, และ Latency
+  - `JSONContentType`: ตั้งค่า Header `Content-Type: application/json` อัตโนมัติ
+- 🧪 **Automated Unit Testing**: เขียน Test ด้วย `testing` และ `net/http/httptest`
+- 🛑 **Graceful Shutdown**: ดักจับ OS Signals ปิดเซิร์ฟเวอร์และเคลียร์ Connections อย่างปลอดภัย
+- 🐳 **Docker Multi-Stage Build**: บิลด์เป็น Static Binary บน Alpine Linux ขนาดเล็กลงเหลือเพียง **24.5 MB**
 
 ---
 
@@ -21,16 +28,25 @@ RESTful API สำหรับจัดการรายการงาน (Tas
 ```
 1_task-app/
 ├── models/
-│   └── task.go             # Data Models, DTOs และ Validation
+│   ├── user.go             # Data Models สำหรับ User & Auth DTOs
+│   └── task.go             # Data Models สำหรับ Task & DTOs
 ├── repository/
-│   └── task_repository.go  # Interface และ In-Memory Storage (Thread-safe)
+│   ├── user_repository.go  # Interface & PostgreSQL User Storage
+│   ├── task_repository.go  # Interface & In-Memory Task Storage
+│   └── postgres_task_repository.go # PostgreSQL Task Storage
 ├── handlers/
-│   └── task_handler.go     # HTTP Handlers และการแปลง JSON
+│   ├── auth_handler.go     # HTTP Handlers สำหรับ Register & Login
+│   └── task_handler.go     # HTTP Handlers สำหรับ Tasks CRUD
 ├── middleware/
-│   └── middleware.go       # Logging และ Response Header Middleware
+│   ├── auth.go             # JWT Authentication Middleware & Context Helper
+│   └── middleware.go       # Logging & JSON Content-Type Middleware
+├── utils/
+│   └── auth.go             # Bcrypt Password Hashing & JWT Helpers
+├── docker-compose.yml      # PostgreSQL Database Service
+├── Dockerfile              # Multi-Stage Dockerfile
+├── .dockerignore           # Docker ignore rules
 ├── go.mod                  # Go Module Definition
-├── main.go                 # Entry Point และการเชื่อมต่อ Routing
-└── README.md               # คู่มือการใช้งานโปรเจกต์
+└── main.go                 # Application Entry Point & Routes
 ```
 
 ---
@@ -39,14 +55,16 @@ RESTful API สำหรับจัดการรายการงาน (Tas
 
 ### 📋 ข้อกำหนดเบื้องต้น (Prerequisites)
 - [Go](https://go.dev/dl/) เวอร์ชัน 1.22 ขึ้นไป
+- [Docker](https://www.docker.com/) & Docker Compose
 
-### ⚙️ การติดตั้งและรันเซิร์ฟเวอร์
-1. Clone หรือเปิดโฟลเดอร์โปรเจกต์:
+### ⚙️ วิธีการติดตั้งและรันเซิร์ฟเวอร์
+
+1. สตาร์ท PostgreSQL Database:
    ```bash
-   cd 1_task-app
+   docker compose up -d
    ```
 
-2. รันแอปพลิเคชัน:
+2. รันแอปพลิเคชัน Go:
    ```bash
    go run main.go
    ```
@@ -57,71 +75,36 @@ RESTful API สำหรับจัดการรายการงาน (Tas
 
 ## 📡 API Endpoints
 
-| Method | Endpoint | คำอธิบาย | Status Code |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/health` | ตรวจสอบสถานะการทำงานของ Server | `200 OK` |
-| `GET` | `/tasks` | ดึงรายการ Task ทั้งหมด | `200 OK` |
-| `GET` | `/tasks/{id}` | ดึงรายละเอียด Task ตาม ID | `200 OK` / `404 Not Found` |
-| `POST` | `/tasks` | สร้าง Task ใหม่ | `201 Created` / `400 Bad Request` |
-| `PUT` | `/tasks/{id}` | แก้ไขข้อมูล Task ตาม ID | `200 OK` / `400 Bad Request` / `404 Not Found` |
-| `DELETE` | `/tasks/{id}` | ลบ Task ตาม ID | `200 OK` / `404 Not Found` |
+### 🔓 Public Endpoints (ไม่ต้องใช้ Token)
+| Method | Endpoint | คำอธิบาย |
+| :--- | :--- | :--- |
+| `GET` | `/health` | ตรวจสอบสถานะการทำงานของ Server |
+| `POST` | `/auth/register` | สมัครสมาชิกใหม่ (รับ `email`, `password`) |
+| `POST` | `/auth/login` | เข้าสู่ระบบเพื่อรับ JWT Token |
+
+### 🔒 Protected Endpoints (ต้องแนบ `Authorization: Bearer <token>`)
+| Method | Endpoint | คำอธิบาย |
+| :--- | :--- | :--- |
+| `GET` | `/tasks` | ดึงรายการ Task ทั้งหมดเฉพาะของตัวเอง |
+| `GET` | `/tasks/{id}` | ดึงรายละเอียด Task ตาม ID |
+| `POST` | `/tasks` | สร้าง Task ใหม่ผูกกับ User ตัวเอง |
+| `PUT` | `/tasks/{id}` | แก้ไขข้อมูล Task ของตัวเอง |
+| `DELETE` | `/tasks/{id}` | ลบ Task ของตัวเอง |
 
 ---
 
-## 🧪 ตัวอย่างการทดสอบ API
-
-### 1. ดึงรายการ Task ทั้งหมด (GET `/tasks`)
+## 🧪 การรัน Unit Tests
 ```bash
-curl -X GET http://localhost:8080/tasks
-```
-**PowerShell:**
-```powershell
-Invoke-RestMethod -Uri 'http://localhost:8080/tasks'
-```
-
-### 2. สร้าง Task ใหม่ (POST `/tasks`)
-```bash
-curl -X POST http://localhost:8080/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"title": "เรียนรู้ Go REST API", "description": "ศึกษาเรื่อง Go Structs และ Handlers"}'
-```
-**PowerShell:**
-```powershell
-$body = @{
-    title = "เรียนรู้ Go REST API"
-    description = "ศึกษาเรื่อง Go Structs และ Handlers"
-} | ConvertTo-Json
-
-Invoke-RestMethod -Uri 'http://localhost:8080/tasks' -Method Post -Body $body -ContentType 'application/json'
-```
-
-### 3. อัปเดตสถานะ Task (PUT `/tasks/1`)
-```bash
-curl -X PUT http://localhost:8080/tasks/1 \
-  -H "Content-Type: application/json" \
-  -d '{"completed": true}'
-```
-**PowerShell:**
-```powershell
-$update = @{ completed = $true } | ConvertTo-Json
-Invoke-RestMethod -Uri 'http://localhost:8080/tasks/1' -Method Put -Body $update -ContentType 'application/json'
-```
-
-### 4. ลบ Task (DELETE `/tasks/1`)
-```bash
-curl -X DELETE http://localhost:8080/tasks/1
-```
-**PowerShell:**
-```powershell
-Invoke-RestMethod -Uri 'http://localhost:8080/tasks/1' -Method Delete
+go test -v -cover ./...
 ```
 
 ---
 
-## 🧠 Key Concepts Learned
+## 🐳 การรันผ่าน Docker
+```bash
+# Build Image
+docker build -t task-app:v1 .
 
-- **Go Structs & Tags**: การใช้ Struct Tags (`json:"id"`) เพื่อแปลงข้อมูลระหว่าง Go และ JSON
-- **Pointers**: การใช้ Pointer (`*string`, `*bool`) ใน DTO สำหรับทำ Partial Update
-- **Implicit Interface**: การออกแบบ Interface สำหรับ Dependency Injection
-- **Concurrency & Goroutines**: การใช้ `sync.RWMutex` และ `defer` ป้องกัน Data Race
-- **Go Standard Library**: การใช้ `net/http` และ `json` โดยไม่ต้องพึ่งพา 3rd-party Frameworks
+# Run Container
+docker run --rm -p 8080:8080 task-app:v1
+```
