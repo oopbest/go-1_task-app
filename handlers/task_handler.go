@@ -1,25 +1,22 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 
-	"github.com/oopbest/task-app/middleware"
+	"github.com/gin-gonic/gin"
 	"github.com/oopbest/task-app/models"
 	"github.com/oopbest/task-app/repository"
 	"github.com/oopbest/task-app/workers"
 )
 
-// TaskHandler จัดการ HTTP Request ทั้งหมดที่เกี่ยวกับ Task
 type TaskHandler struct {
 	repo       repository.TaskRepository
-	workerPool *workers.WorkerPool // เพิ่ม WorkerPool เข้ามา
+	workerPool *workers.WorkerPool
 }
 
-// NewTaskHandler ฟังก์ชัน Constructor สำหรับสร้าง TaskHandler
 func NewTaskHandler(repo repository.TaskRepository, workerPool *workers.WorkerPool) *TaskHandler {
 	return &TaskHandler{
 		repo:       repo,
@@ -27,36 +24,35 @@ func NewTaskHandler(repo repository.TaskRepository, workerPool *workers.WorkerPo
 	}
 }
 
-func respondJSON(w http.ResponseWriter, status int, payload any) {
-	w.WriteHeader(status)
-	if payload != nil {
-		_ = json.NewEncoder(w).Encode(payload)
-	}
-}
+// GetAllTasks godoc
+// @Summary ดึงรายการ Task ทั้งหมด (Pagination, Search, Filter & Sort)
+// @Description ดึงรายการ Task ของ User ตัวเอง พร้อมตัวเลือกค้นหา กรอง และแบ่งหน้า
+// @Tags Tasks
+// @Security BearerAuth
+// @Produce json
+// @Param page query int false "หมายเลขหน้า (Default: 1)"
+// @Param limit query int false "จำนวนรายการต่อหน้า (Default: 10, Max: 100)"
+// @Param search query string false "ค้นหาจากชื่อเรื่องหรือรายละเอียด"
+// @Param completed query bool false "กรองตามสถานะ (true = เสร็จแล้ว, false = ยังไม่เสร็จ)"
+// @Param sort query string false "เรียงตามฟิลด์: id, title, created_at (Default: created_at)"
+// @Param order query string false "ลำดับ: asc หรือ desc (Default: desc)"
+// @Success 200 {object} models.PaginatedTasks
+// @Failure 401 {object} map[string]string "Unauthorized"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /tasks [get]
+func (h *TaskHandler) GetAllTasks(c *gin.Context) {
+	userID := c.GetInt("user_id")
 
-func respondError(w http.ResponseWriter, status int, message string) {
-	respondJSON(w, status, map[string]string{"error": message})
-}
-
-// GetAllTasks ดึงรายการ Task ตามเงื่อนไข Query Parameters (Search, Filter, Sort, Pagination)
-func (h *TaskHandler) GetAllTasks(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserIDFromContext(r.Context())
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
-
-	query := r.URL.Query()
-	page, _ := strconv.Atoi(query.Get("page"))
-	limit, _ := strconv.Atoi(query.Get("limit"))
-	search := query.Get("search")
-	sortBy := query.Get("sort")
-	order := query.Get("order")
+	page, _ := strconv.Atoi(c.Query("page"))
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	search := c.Query("search")
+	sortBy := c.Query("sort")
+	order := c.Query("order")
 
 	var completed *bool
-	if completedStr := query.Get("completed"); completedStr != "" {
-		if c, err := strconv.ParseBool(completedStr); err == nil {
-			completed = &c
+	if completedStr := c.Query("completed"); completedStr != "" {
+		if val, err := strconv.ParseBool(completedStr); err == nil {
+			completed = &val
 		}
 	}
 
@@ -71,63 +67,77 @@ func (h *TaskHandler) GetAllTasks(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.repo.GetAll(userID, filter)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "Failed to fetch tasks")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tasks"})
 		return
 	}
 
-	respondJSON(w, http.StatusOK, result)
+	c.JSON(http.StatusOK, result)
 }
 
-// GetTaskByID ดึง Task ตาม ID (เฉพาะของ User ตัวเอง)
-func (h *TaskHandler) GetTaskByID(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserIDFromContext(r.Context())
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
+// GetTaskByID godoc
+// @Summary ดึงข้อมูล Task ตาม ID
+// @Description ดึงรายละเอียดของ Task เฉพาะของ User ตัวเองตาม ID
+// @Tags Tasks
+// @Security BearerAuth
+// @Produce json
+// @Param id path int true "Task ID"
+// @Success 200 {object} models.Task
+// @Failure 400 {object} map[string]string "Invalid ID format"
+// @Failure 401 {object} map[string]string "Unauthorized"
+// @Failure 404 {object} map[string]string "Task not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /tasks/{id} [get]
+func (h *TaskHandler) GetTaskByID(c *gin.Context) {
+	userID := c.GetInt("user_id")
 
-	idStr := r.PathValue("id")
-	id, err := strconv.Atoi(idStr)
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil || id <= 0 {
-		respondError(w, http.StatusBadRequest, "Invalid task ID format")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID format"})
 		return
 	}
 
 	task, err := h.repo.GetByID(id, userID)
 	if err != nil {
 		if errors.Is(err, repository.ErrTaskNotFound) {
-			respondError(w, http.StatusNotFound, "Task not found")
+			c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
 			return
 		}
-		respondError(w, http.StatusInternalServerError, "Internal server error")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
 
-	respondJSON(w, http.StatusOK, task)
+	c.JSON(http.StatusOK, task)
 }
 
-// CreateTask สร้าง Task โดยผูกกับ UserID + โยน Job เข้า Worker Pool
-func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserIDFromContext(r.Context())
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
+// CreateTask godoc
+// @Summary สร้าง Task ใหม่
+// @Description สร้างงานใหม่และผูกกับ User ID อัตโนมัติ พร้อมส่งแจ้งเตือนเข้า Worker Pool
+// @Tags Tasks
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body models.CreateTaskInput true "ข้อมูลงานใหม่"
+// @Success 201 {object} models.Task
+// @Failure 400 {object} map[string]string "ข้อมูลไม่ถูกต้อง"
+// @Failure 401 {object} map[string]string "Unauthorized"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /tasks [post]
+func (h *TaskHandler) CreateTask(c *gin.Context) {
+	userID := c.GetInt("user_id")
 
 	var input models.CreateTaskInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid JSON request body")
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON request body"})
 		return
 	}
 
 	if err := input.Validate(); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	task := h.repo.Create(input, userID)
 
-	// ⚡ โยน Job เข้า Background Worker Pool (ส่ง Email แจ้งเตือนในเบื้องหลัง)
 	if h.workerPool != nil {
 		h.workerPool.Enqueue(workers.Job{
 			Type:   "TASK_CREATED",
@@ -137,46 +147,54 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	respondJSON(w, http.StatusCreated, task)
+	c.JSON(http.StatusCreated, task)
 }
 
-// UpdateTask แก้ไข Task + โยน Job เข้า Worker Pool
-func (h *TaskHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserIDFromContext(r.Context())
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
+// UpdateTask godoc
+// @Summary แก้ไขข้อมูล Task
+// @Description แก้ไข Title, Description หรือสถานะ Completed ของ Task
+// @Tags Tasks
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path int true "Task ID"
+// @Param input body models.UpdateTaskInput true "ข้อมูลที่ต้องการแก้ไข"
+// @Success 200 {object} models.Task
+// @Failure 400 {object} map[string]string "ข้อมูลไม่ถูกต้อง"
+// @Failure 401 {object} map[string]string "Unauthorized"
+// @Failure 404 {object} map[string]string "Task not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /tasks/{id} [put]
+func (h *TaskHandler) UpdateTask(c *gin.Context) {
+	userID := c.GetInt("user_id")
 
-	idStr := r.PathValue("id")
-	id, err := strconv.Atoi(idStr)
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil || id <= 0 {
-		respondError(w, http.StatusBadRequest, "Invalid task ID format")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID format"})
 		return
 	}
 
 	var input models.UpdateTaskInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		respondError(w, http.StatusBadRequest, "Invalid JSON request body")
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON request body"})
 		return
 	}
 
 	if err := input.Validate(); err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	task, err := h.repo.Update(id, input, userID)
 	if err != nil {
 		if errors.Is(err, repository.ErrTaskNotFound) {
-			respondError(w, http.StatusNotFound, "Task not found")
+			c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
 			return
 		}
-		respondError(w, http.StatusInternalServerError, "Internal server error")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
 
-	// ⚡ โยน Job แจ้งเตือนการแก้ไข
 	if h.workerPool != nil {
 		h.workerPool.Enqueue(workers.Job{
 			Type:   "TASK_UPDATED",
@@ -186,34 +204,40 @@ func (h *TaskHandler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	respondJSON(w, http.StatusOK, task)
+	c.JSON(http.StatusOK, task)
 }
 
-// DeleteTask ลบ Task + โยน Job เข้า Worker Pool
-func (h *TaskHandler) DeleteTask(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserIDFromContext(r.Context())
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "Unauthorized")
-		return
-	}
+// DeleteTask godoc
+// @Summary ลบ Task
+// @Description ลบ Task ของตัวเองออกจากระบบ
+// @Tags Tasks
+// @Security BearerAuth
+// @Produce json
+// @Param id path int true "Task ID"
+// @Success 200 {object} map[string]string "Task deleted successfully"
+// @Failure 400 {object} map[string]string "Invalid ID format"
+// @Failure 401 {object} map[string]string "Unauthorized"
+// @Failure 404 {object} map[string]string "Task not found"
+// @Failure 500 {object} map[string]string "Internal server error"
+// @Router /tasks/{id} [delete]
+func (h *TaskHandler) DeleteTask(c *gin.Context) {
+	userID := c.GetInt("user_id")
 
-	idStr := r.PathValue("id")
-	id, err := strconv.Atoi(idStr)
+	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil || id <= 0 {
-		respondError(w, http.StatusBadRequest, "Invalid task ID format")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID format"})
 		return
 	}
 
 	if err := h.repo.Delete(id, userID); err != nil {
 		if errors.Is(err, repository.ErrTaskNotFound) {
-			respondError(w, http.StatusNotFound, "Task not found")
+			c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
 			return
 		}
-		respondError(w, http.StatusInternalServerError, "Internal server error")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Internal server error"})
 		return
 	}
 
-	// ⚡ โยน Job แจ้งเตือนการลบ
 	if h.workerPool != nil {
 		h.workerPool.Enqueue(workers.Job{
 			Type:   "TASK_DELETED",
@@ -223,7 +247,7 @@ func (h *TaskHandler) DeleteTask(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{
+	c.JSON(http.StatusOK, gin.H{
 		"message": "Task deleted successfully",
 	})
 }

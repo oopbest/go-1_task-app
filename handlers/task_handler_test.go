@@ -2,28 +2,42 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/oopbest/task-app/middleware"
+	"github.com/gin-gonic/gin"
 	"github.com/oopbest/task-app/models"
 	"github.com/oopbest/task-app/repository"
 )
 
-func TestTaskHandler_GetAllTasks(t *testing.T) {
-	repo := repository.NewMemoryTaskRepository()
+func init() {
+	gin.SetMode(gin.TestMode)
+}
+
+func setupTestRouter(repo repository.TaskRepository) *gin.Engine {
+	r := gin.New()
 	handler := NewTaskHandler(repo, nil)
 
-	// จำลอง Request พร้อม Context ที่มี UserID = 1
-	req := httptest.NewRequest(http.MethodGet, "/tasks?page=1&limit=10", nil)
-	ctx := context.WithValue(req.Context(), middleware.UserIDContextKey, 1)
-	req = req.WithContext(ctx)
+	// Mock Auth middleware setting user_id = 1
+	r.Use(func(c *gin.Context) {
+		c.Set("user_id", 1)
+		c.Next()
+	})
 
+	r.GET("/tasks", handler.GetAllTasks)
+	r.POST("/tasks", handler.CreateTask)
+	return r
+}
+
+func TestTaskHandler_GetAllTasks(t *testing.T) {
+	repo := repository.NewMemoryTaskRepository()
+	r := setupTestRouter(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks?page=1&limit=10", nil)
 	rr := httptest.NewRecorder()
-	handler.GetAllTasks(rr, req)
+	r.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
@@ -44,17 +58,14 @@ func TestTaskHandler_GetAllTasks(t *testing.T) {
 
 func TestTaskHandler_CreateTask(t *testing.T) {
 	repo := repository.NewMemoryTaskRepository()
-	handler := NewTaskHandler(repo, nil)
+	r := setupTestRouter(repo)
 
 	payload := []byte(`{"title":"New Task via Test","description":"Testing HTTP handler"}`)
 	req := httptest.NewRequest(http.MethodPost, "/tasks", bytes.NewBuffer(payload))
 	req.Header.Set("Content-Type", "application/json")
 
-	ctx := context.WithValue(req.Context(), middleware.UserIDContextKey, 1)
-	req = req.WithContext(ctx)
-
 	rr := httptest.NewRecorder()
-	handler.CreateTask(rr, req)
+	r.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusCreated {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusCreated)

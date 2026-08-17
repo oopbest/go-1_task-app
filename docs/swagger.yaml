@@ -1,0 +1,411 @@
+basePath: /
+definitions:
+  models.AuthResponse:
+    properties:
+      token:
+        type: string
+      user:
+        $ref: '#/definitions/models.User'
+    type: object
+  models.CreateTaskInput:
+    properties:
+      description:
+        type: string
+      title:
+        type: string
+    type: object
+  models.LoginInput:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  models.PaginatedTasks:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/models.Task'
+        type: array
+      limit:
+        type: integer
+      page:
+        type: integer
+      total_items:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  models.RegisterInput:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  models.Task:
+    properties:
+      completed:
+        type: boolean
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: integer
+      title:
+        type: string
+      user_id:
+        description: เพิ่มฟิลด์นี้
+        type: integer
+    type: object
+  models.UpdateTaskInput:
+    properties:
+      completed:
+        type: boolean
+      description:
+        type: string
+      title:
+        type: string
+    type: object
+  models.User:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: integer
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: API สำหรับจัดการงานแบบ Multi-User พร้อม Redis Caching และ Concurrency
+    Worker Pool
+  title: Task Management REST API (Go Zero to Hero)
+  version: "1.0"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: เข้าสู่ระบบด้วย Email และ Password เพื่อรับ JWT Token
+      parameters:
+      - description: ข้อมูลเข้าสู่ระบบ
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/models.LoginInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.AuthResponse'
+        "400":
+          description: ข้อมูลไม่ถูกต้อง
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Email หรือ Password ไม่ถูกต้อง
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: เข้าสู่ระบบ (Login)
+      tags:
+      - Auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: สร้างบัญชีผู้ใช้ใหม่ด้วย Email และ Password
+      parameters:
+      - description: ข้อมูลการสมัครสมาชิก
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/models.RegisterInput'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.AuthResponse'
+        "400":
+          description: ข้อมูลไม่ถูกต้อง
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Email นี้ถูกใช้งานแล้ว
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: สมัครสมาชิกใหม่ (Register)
+      tags:
+      - Auth
+  /tasks:
+    get:
+      description: ดึงรายการ Task ของ User ตัวเอง พร้อมตัวเลือกค้นหา กรอง และแบ่งหน้า
+      parameters:
+      - description: 'หมายเลขหน้า (Default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'จำนวนรายการต่อหน้า (Default: 10, Max: 100)'
+        in: query
+        name: limit
+        type: integer
+      - description: ค้นหาจากชื่อเรื่องหรือรายละเอียด
+        in: query
+        name: search
+        type: string
+      - description: กรองตามสถานะ (true = เสร็จแล้ว, false = ยังไม่เสร็จ)
+        in: query
+        name: completed
+        type: boolean
+      - description: 'เรียงตามฟิลด์: id, title, created_at (Default: created_at)'
+        in: query
+        name: sort
+        type: string
+      - description: 'ลำดับ: asc หรือ desc (Default: desc)'
+        in: query
+        name: order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.PaginatedTasks'
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: ดึงรายการ Task ทั้งหมด (Pagination, Search, Filter & Sort)
+      tags:
+      - Tasks
+    post:
+      consumes:
+      - application/json
+      description: สร้างงานใหม่และผูกกับ User ID อัตโนมัติ พร้อมส่งแจ้งเตือนเข้า Worker
+        Pool
+      parameters:
+      - description: ข้อมูลงานใหม่
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/models.CreateTaskInput'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/models.Task'
+        "400":
+          description: ข้อมูลไม่ถูกต้อง
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: สร้าง Task ใหม่
+      tags:
+      - Tasks
+  /tasks/{id}:
+    delete:
+      description: ลบ Task ของตัวเองออกจากระบบ
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Task deleted successfully
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Invalid ID format
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Task not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: ลบ Task
+      tags:
+      - Tasks
+    get:
+      description: ดึงรายละเอียดของ Task เฉพาะของ User ตัวเองตาม ID
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Task'
+        "400":
+          description: Invalid ID format
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Task not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: ดึงข้อมูล Task ตาม ID
+      tags:
+      - Tasks
+    put:
+      consumes:
+      - application/json
+      description: แก้ไข Title, Description หรือสถานะ Completed ของ Task
+      parameters:
+      - description: Task ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: ข้อมูลที่ต้องการแก้ไข
+        in: body
+        name: input
+        required: true
+        schema:
+          $ref: '#/definitions/models.UpdateTaskInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Task'
+        "400":
+          description: ข้อมูลไม่ถูกต้อง
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Task not found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal server error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: แก้ไขข้อมูล Task
+      tags:
+      - Tasks
+securityDefinitions:
+  BearerAuth:
+    description: 'ใส่ JWT Token ในรูปแบบ: Bearer <your_token>'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

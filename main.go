@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,13 +11,28 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	_ "github.com/oopbest/task-app/docs" // Swagger Docs ที่ถูก Gen ขึ้นมา
 	"github.com/oopbest/task-app/handlers"
 	"github.com/oopbest/task-app/middleware"
 	"github.com/oopbest/task-app/repository"
 	"github.com/oopbest/task-app/workers"
 	"github.com/redis/go-redis/v9"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
+
+// @title Task Management REST API (Go Zero to Hero)
+// @version 1.0
+// @description API สำหรับจัดการงานแบบ Multi-User พร้อม Redis Caching และ Concurrency Worker Pool
+// @host localhost:8080
+// @BasePath /
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description ใส่ JWT Token ในรูปแบบ: Bearer <your_token>
 
 func main() {
 	port := os.Getenv("PORT")
@@ -81,48 +95,59 @@ func main() {
 	postgresTaskRepo := repository.NewPostgresTaskRepository(db)
 	cachedTaskRepo := repository.NewCachedTaskRepository(postgresTaskRepo, rdb, 5*time.Minute)
 
-	// 6. สร้าง Handlers (ส่ง Worker Pool เข้าไป)
+	// 6. สร้าง Handlers
 	authHandler := handlers.NewAuthHandler(userRepo)
 	taskHandler := handlers.NewTaskHandler(cachedTaskRepo, workerPool)
 
-	// 7. กำหนด Router
-	mux := http.NewServeMux()
+	// 7. ตั้งค่า Gin Router & Middlewares
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+	r.Use(gin.Logger(), gin.Recovery())
 
-	// Public Endpoints
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
+	// 8. Swagger Documentation Endpoint
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// 9. Health Check
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
 			"status":   "ok",
 			"database": "postgres",
 			"cache":    "redis",
 			"workers":  3,
+			"swagger":  "/swagger/index.html",
 			"time":     time.Now().Format(time.RFC3339),
 		})
 	})
-	mux.HandleFunc("POST /auth/register", authHandler.Register)
-	mux.HandleFunc("POST /auth/login", authHandler.Login)
 
-	// Protected Endpoints (ต้องผ่าน AuthMiddleware)
-	authMW := middleware.AuthMiddleware
-	mux.Handle("GET /tasks", authMW(http.HandlerFunc(taskHandler.GetAllTasks)))
-	mux.Handle("GET /tasks/{id}", authMW(http.HandlerFunc(taskHandler.GetTaskByID)))
-	mux.Handle("POST /tasks", authMW(http.HandlerFunc(taskHandler.CreateTask)))
-	mux.Handle("PUT /tasks/{id}", authMW(http.HandlerFunc(taskHandler.UpdateTask)))
-	mux.Handle("DELETE /tasks/{id}", authMW(http.HandlerFunc(taskHandler.DeleteTask)))
+	// 10. Public Routes (Auth)
+	authGroup := r.Group("/auth")
+	{
+		authGroup.POST("/register", authHandler.Register)
+		authGroup.POST("/login", authHandler.Login)
+	}
 
-	// 8. สวม Global Middleware (JSON + Logging)
-	handlerWithMiddleware := middleware.Logging(middleware.JSONContentType(mux))
+	// 11. Protected Routes (Tasks with JWT Auth)
+	taskGroup := r.Group("/tasks", middleware.GinAuthMiddleware())
+	{
+		taskGroup.GET("", taskHandler.GetAllTasks)
+		taskGroup.GET("/:id", taskHandler.GetTaskByID)
+		taskGroup.POST("", taskHandler.CreateTask)
+		taskGroup.PUT("/:id", taskHandler.UpdateTask)
+		taskGroup.DELETE("/:id", taskHandler.DeleteTask)
+	}
 
-	// 9. ตั้งค่า HTTP Server
+	// 12. ตั้งค่า HTTP Server พร้อม Graceful Shutdown
 	server := &http.Server{
 		Addr:         ":" + port,
-		Handler:      handlerWithMiddleware,
+		Handler:      r,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
 
 	go func() {
 		fmt.Println("==================================================")
-		fmt.Printf("🚀 Task API (JWT + Postgres + Redis + WorkerPool) on http://localhost:%s\n", port)
+		fmt.Printf("🚀 Gin Task API on http://localhost:%s\n", port)
+		fmt.Printf("📖 Swagger UI on http://localhost:%s/swagger/index.html\n", port)
 		fmt.Println("==================================================")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
@@ -135,7 +160,6 @@ func main() {
 	<-quit
 	log.Println("🛑 Shutdown signal received, shutting down gracefully...")
 
-	// ปิด HTTP Server ก่อน
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -143,7 +167,6 @@ func main() {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
-	// ปิด Worker Pool และรอให้งานเบื้องหลังที่ค้างอยู่ทำให้เสร็จ
 	workerPool.Stop()
 
 	log.Println("✅ Server exited cleanly")
