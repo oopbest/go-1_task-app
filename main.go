@@ -16,6 +16,7 @@ import (
 	"github.com/oopbest/task-app/handlers"
 	"github.com/oopbest/task-app/middleware"
 	"github.com/oopbest/task-app/repository"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -29,6 +30,12 @@ func main() {
 		dbURL = "postgres://postgres:mysecretpassword@localhost:5432/taskdb?sslmode=disable"
 	}
 
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+
+	// 1. เชื่อมต่อ PostgreSQL
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatalf("Database connection error: %v", err)
@@ -39,25 +46,41 @@ func main() {
 	db.SetMaxIdleConns(25)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
-	// ทดสอบการเชื่อมต่อ Database
 	pingCtx, pingCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer pingCancel()
 	if err := db.PingContext(pingCtx); err != nil {
 		log.Fatalf("Failed to connect to PostgreSQL: %v", err)
 	}
 	log.Println("🐘 Connected to PostgreSQL database successfully!")
-	// 1. รัน Database Migrations อัตโนมัติ
+
+	// 2. เชื่อมต่อ Redis
+	rdb := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+	defer rdb.Close()
+
+	redisCtx, redisCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer redisCancel()
+	if err := rdb.Ping(redisCtx).Err(); err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
+	log.Println("⚡ Connected to Redis cache successfully!")
+
+	// 3. รัน Database Migrations อัตโนมัติ
 	if err := repository.RunMigrations(db); err != nil {
 		log.Fatalf("Database migration failed: %v", err)
 	}
-	// 2. สร้าง Repositories
-	userRepo := repository.NewPostgresUserRepository(db)
-	taskRepo := repository.NewPostgresTaskRepository(db)
-	// 3. สร้าง Handlers
-	authHandler := handlers.NewAuthHandler(userRepo)
-	taskHandler := handlers.NewTaskHandler(taskRepo)
 
-	// 4. กำหนด Router
+	// 4. สร้าง Repositories (ใช้ Decorator Pattern สวม Redis Cache)
+	userRepo := repository.NewPostgresUserRepository(db)
+	postgresTaskRepo := repository.NewPostgresTaskRepository(db)
+	cachedTaskRepo := repository.NewCachedTaskRepository(postgresTaskRepo, rdb, 5*time.Minute)
+
+	// 5. สร้าง Handlers
+	authHandler := handlers.NewAuthHandler(userRepo)
+	taskHandler := handlers.NewTaskHandler(cachedTaskRepo)
+
+	// 6. กำหนด Router
 	mux := http.NewServeMux()
 
 	// Public Endpoints
@@ -65,6 +88,7 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":   "ok",
 			"database": "postgres",
+			"cache":    "redis",
 			"time":     time.Now().Format(time.RFC3339),
 		})
 	})
@@ -79,10 +103,10 @@ func main() {
 	mux.Handle("PUT /tasks/{id}", authMW(http.HandlerFunc(taskHandler.UpdateTask)))
 	mux.Handle("DELETE /tasks/{id}", authMW(http.HandlerFunc(taskHandler.DeleteTask)))
 
-	// 5. สวม Global Middleware (JSON + Logging)
+	// 7. สวม Global Middleware (JSON + Logging)
 	handlerWithMiddleware := middleware.Logging(middleware.JSONContentType(mux))
 
-	// 6. ตั้งค่า HTTP Server
+	// 8. ตั้งค่า HTTP Server
 	server := &http.Server{
 		Addr:         ":" + port,
 		Handler:      handlerWithMiddleware,
@@ -92,7 +116,7 @@ func main() {
 
 	go func() {
 		fmt.Println("==================================================")
-		fmt.Printf("🚀 Task API (JWT Auth + Postgres) on http://localhost:%s\n", port)
+		fmt.Printf("🚀 Task API (JWT + Postgres + Redis) on http://localhost:%s\n", port)
 		fmt.Println("==================================================")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
