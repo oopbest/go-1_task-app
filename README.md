@@ -1,11 +1,15 @@
 # 📝 Task Management REST API (Go Zero to Hero)
 
-RESTful API สำหรับจัดการงานแบบ **Multi-User** ระดับ **Enterprise-Grade** พัฒนาด้วยภาษา **Go (Golang)** เชื่อมต่อฐานข้อมูล **PostgreSQL** พร้อมเสริมความเร็วระดับ **Microseconds ด้วย Redis Cache**, ระบบความปลอดภัย **JWT Authentication**, การจัดการ Schema ด้วย **Database Migrations**, และออกแบบตามหลักการ **Clean Layered Architecture (Decorator Pattern)** 🚀⚡
+RESTful API สำหรับจัดการงานแบบ **Multi-User** ระดับ **Enterprise-Grade** พัฒนาด้วยภาษา **Go (Golang)** เชื่อมต่อฐานข้อมูล **PostgreSQL** เสริมความเร็วระดับ **Microseconds ด้วย Redis Cache**, ระบบประมวลผลเบื้องหลัง **Background Worker Pool (Goroutines & Channels)**, ความปลอดภัย **JWT Authentication**, การจัดการ Schema ด้วย **Database Migrations**, และออกแบบตามหลักการ **Clean Layered Architecture (Decorator Pattern)** 🚀⚡
 
 ---
 
 ## ✨ Features
 
+- ⚡ **Background Worker Pool (Go Concurrency & Channels)**:
+  - ประมวลผลงานเบื้องหลังแบบ Asynchronous (เช่น จำลองการส่ง Email / Webhook แจ้งเตือน)
+  - ควบคุมจำนวน Worker คงที่ (3 Goroutines) และขนาดคิวงานใน RAM (`chan Job` ขนาด 100) ป้องกัน Server Overload
+  - **Graceful Worker Shutdown**: ใช้ `sync.WaitGroup` รอให้งานที่ค้างในคิวทำให้เสร็จสมบูรณ์ก่อนปิดเซิร์ฟเวอร์
 - 🏎️ **Redis In-Memory Caching (Sub-Millisecond Latency)**:
   - **Cache-Aside Pattern**: ตรวจสอบ Redis Cache ก่อนดึง PostgreSQL ลด Latency เหลือเพียง **~500 µs (ไมโครวินาที)**
   - **Cache Invalidation**: เคลียร์ Cache อัตโนมัติทันทีที่มีการ Create, Update, Delete ป้องกันข้อมูลเก่าค้าง
@@ -46,9 +50,11 @@ RESTful API สำหรับจัดการงานแบบ **Multi-User*
 │   ├── postgres_task_repository.go # PostgreSQL Dynamic Query Repository
 │   ├── cached_task_repository.go   # Redis Caching Decorator Repository
 │   └── migrations.go       # Migration Runner
+├── workers/
+│   └── worker_pool.go      # Background Worker Pool (Goroutines & Channels)
 ├── handlers/
 │   ├── auth_handler.go     # HTTP Handlers สำหรับ Register & Login
-│   └── task_handler.go     # HTTP Handlers สำหรับ Tasks CRUD & Pagination
+│   └── task_handler.go     # HTTP Handlers สำหรับ Tasks CRUD & Worker Enqueue
 ├── middleware/
 │   ├── auth.go             # JWT Authentication Middleware & Context Helper
 │   └── middleware.go       # Logging & JSON Content-Type Middleware
@@ -58,7 +64,7 @@ RESTful API สำหรับจัดการงานแบบ **Multi-User*
 ├── Dockerfile              # Multi-Stage Dockerfile
 ├── .dockerignore           # Docker ignore rules
 ├── go.mod                  # Go Module Definition
-└── main.go                 # Application Entry Point & Routes
+└── main.go                 # Application Entry Point & Lifecycle
 ```
 
 ---
@@ -90,7 +96,7 @@ RESTful API สำหรับจัดการงานแบบ **Multi-User*
 ### 🔓 Public Endpoints (ไม่ต้องใช้ Token)
 | Method | Endpoint | คำอธิบาย |
 | :--- | :--- | :--- |
-| `GET` | `/health` | ตรวจสอบสถานะ Server, Database และ Cache |
+| `GET` | `/health` | ตรวจสอบสถานะ Server, Database, Cache, และ Workers |
 | `POST` | `/auth/register` | สมัครสมาชิกใหม่ (รับ `email`, `password`) |
 | `POST` | `/auth/login` | เข้าสู่ระบบเพื่อรับ JWT Token |
 
@@ -99,9 +105,9 @@ RESTful API สำหรับจัดการงานแบบ **Multi-User*
 | :--- | :--- | :--- |
 | `GET` | `/tasks` | ดึงรายการ Task (รองรับ `page`, `limit`, `search`, `completed`, `sort`, `order`) |
 | `GET` | `/tasks/{id}` | ดึงรายละเอียด Task ตาม ID (ดึงจาก Redis Cache) |
-| `POST` | `/tasks` | สร้าง Task ใหม่ + ล้าง Cache |
-| `PUT` | `/tasks/{id}` | แก้ไข Task + ล้าง Cache |
-| `DELETE` | `/tasks/{id}` | ลบ Task + ล้าง Cache |
+| `POST` | `/tasks` | สร้าง Task ใหม่ + ล้าง Cache + โยนเข้า Worker Pool |
+| `PUT` | `/tasks/{id}` | แก้ไข Task + ล้าง Cache + โยนเข้า Worker Pool |
+| `DELETE` | `/tasks/{id}` | ลบ Task + ล้าง Cache + โยนเข้า Worker Pool |
 
 ---
 

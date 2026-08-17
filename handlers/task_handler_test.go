@@ -15,7 +15,7 @@ import (
 
 func TestTaskHandler_GetAllTasks(t *testing.T) {
 	repo := repository.NewMemoryTaskRepository()
-	handler := NewTaskHandler(repo)
+	handler := NewTaskHandler(repo, nil)
 
 	// จำลอง Request พร้อม Context ที่มี UserID = 1
 	req := httptest.NewRequest(http.MethodGet, "/tasks?page=1&limit=10", nil)
@@ -44,7 +44,7 @@ func TestTaskHandler_GetAllTasks(t *testing.T) {
 
 func TestTaskHandler_CreateTask(t *testing.T) {
 	repo := repository.NewMemoryTaskRepository()
-	handler := NewTaskHandler(repo)
+	handler := NewTaskHandler(repo, nil)
 
 	payload := []byte(`{"title":"New Task via Test","description":"Testing HTTP handler"}`)
 	req := httptest.NewRequest(http.MethodPost, "/tasks", bytes.NewBuffer(payload))
