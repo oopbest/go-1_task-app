@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/oopbest/task-app/metrics"
+	pb "github.com/oopbest/task-app/proto/notification"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Job โครงสร้างข้อมูลงานเบื้องหลังที่ต้องการให้ Worker นำไปทำ
@@ -25,16 +28,31 @@ type WorkerPool struct {
 	wg         sync.WaitGroup
 	ctx        context.Context
 	cancel     context.CancelFunc
+	grpcClient pb.NotificationServiceClient
+	grpcConn   *grpc.ClientConn
 }
 
-// NewWorkerPool Constructor สำหรับสร้าง WorkerPool
-func NewWorkerPool(numWorkers int, queueSize int) *WorkerPool {
+// NewWorkerPool Constructor สำหรับสร้าง WorkerPool พร้อมเชื่อมต่อ gRPC Microservice
+func NewWorkerPool(numWorkers int, queueSize int, grpcServerAddr string) *WorkerPool {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// เชื่อมต่อ gRPC Notification Microservice
+	conn, err := grpc.NewClient(grpcServerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	var client pb.NotificationServiceClient
+	if err != nil {
+		log.Printf("⚠️ Warning: Could not connect to gRPC Notification Service at %s: %v\n", grpcServerAddr, err)
+	} else {
+		client = pb.NewNotificationServiceClient(conn)
+		log.Printf("🌐 Connected to gRPC Notification Service at %s\n", grpcServerAddr)
+	}
+
 	return &WorkerPool{
 		numWorkers: numWorkers,
-		jobQueue:   make(chan Job, queueSize), // Buffered Channel
+		jobQueue:   make(chan Job, queueSize),
 		ctx:        ctx,
 		cancel:     cancel,
+		grpcClient: client,
+		grpcConn:   conn,
 	}
 }
 
@@ -54,7 +72,6 @@ func (wp *WorkerPool) worker(id int) {
 	for {
 		select {
 		case <-wp.ctx.Done():
-			// ถ้าได้รับคำสั่ง Cancel ให้เคลียร์งานที่ค้างในคิวให้หมดก่อนปิด
 			for job := range wp.jobQueue {
 				wp.processJob(id, job)
 			}
@@ -63,7 +80,6 @@ func (wp *WorkerPool) worker(id int) {
 
 		case job, ok := <-wp.jobQueue:
 			if !ok {
-				// Channel ถูกปิดแล้ว
 				log.Printf("🛑 Worker %d stopped (channel closed)\n", id)
 				return
 			}
@@ -72,37 +88,57 @@ func (wp *WorkerPool) worker(id int) {
 	}
 }
 
-// processJob ฟังก์ชันจำลองการประมวลผลงานหนักเบื้องหลัง (เช่น ส่ง Email / ยิง Webhook)
+// processJob ฟังก์ชันยิง gRPC Call ข้ามไปยัง Notification Microservice
 func (wp *WorkerPool) processJob(workerID int, job Job) {
 	log.Printf("👷 [Worker %d] START processing job: [%s] for Task #%d (User #%d: '%s')\n",
 		workerID, job.Type, job.TaskID, job.UserID, job.Title)
 
-	// จำลองเวลาในการทำงานเบื้องหลัง 1.5 วินาที
-	time.Sleep(1500 * time.Millisecond)
+	// ⚡ ยิง gRPC Call ข้าม Service ไปยัง Notification Microservice
+	if wp.grpcClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
 
-	// 📊 บันทึกสถิติงานเข้า Prometheus
+		resp, err := wp.grpcClient.SendNotification(ctx, &pb.NotificationRequest{
+			EventType: job.Type,
+			TaskId:    int64(job.TaskID),
+			UserId:    int64(job.UserID),
+			Title:     job.Title,
+		})
+
+		if err != nil {
+			log.Printf("❌ [Worker %d] gRPC Error calling Notification Service: %v\n", workerID, err)
+			metrics.WorkerJobsTotal.WithLabelValues(job.Type, "error").Inc()
+			return
+		}
+
+		log.Printf("✅ [Worker %d] gRPC SUCCESS: %s (at %s)\n", workerID, resp.GetMessage(), resp.GetSentAt())
+	} else {
+		// Fallback จำลองถ้าไม่มี gRPC
+		time.Sleep(1000 * time.Millisecond)
+		log.Printf("✅ [Worker %d] COMPLETED job locally: [%s] for Task #%d\n", workerID, job.Type, job.TaskID)
+	}
+
 	metrics.WorkerJobsTotal.WithLabelValues(job.Type, "success").Inc()
-
-	log.Printf("✅ [Worker %d] COMPLETED job: [%s] for Task #%d (Notification sent successfully!)\n",
-		workerID, job.Type, job.TaskID)
 }
 
 // Enqueue ส่งงานเข้าคิว (Non-blocking)
 func (wp *WorkerPool) Enqueue(job Job) {
 	select {
 	case wp.jobQueue <- job:
-		// ส่งเข้า Channel สำเร็จ
 	default:
-		// กรณีที่คิวเต็ม 100 งาน จะแจ้งเตือนเพื่อไม่ให้บล็อก HTTP Request
 		log.Printf("⚠️ Worker Pool queue is FULL! Dropping job: [%s] for Task #%d\n", job.Type, job.TaskID)
 	}
 }
 
-// Stop ปิด Worker Pool อย่างปลอดภัย (Graceful Shutdown)
+// Stop ปิด Worker Pool และปิด gRPC Connection
 func (wp *WorkerPool) Stop() {
 	log.Println("🛑 Stopping Worker Pool, waiting for pending jobs to finish...")
-	close(wp.jobQueue) // ปิด Channel ไม่รับงานใหม่
-	wp.cancel()        // แจ้งเตือน Context
-	wp.wg.Wait()       // รอให้ Worker ทุกตัวทำงานที่ค้างอยู่จนเสร็จ 100%
-	log.Println("✅ All background workers stopped cleanly")
+	close(wp.jobQueue)
+	wp.cancel()
+	wp.wg.Wait()
+
+	if wp.grpcConn != nil {
+		_ = wp.grpcConn.Close()
+	}
+	log.Println("✅ All background workers and gRPC connections stopped cleanly")
 }

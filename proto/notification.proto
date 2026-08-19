@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package notification;
+
+option go_package = "github.com/oopbest/task-app/proto/notification";
+
+// 1. กำหนด RPC Services (Interface ของ Microservice)
+service NotificationService {
+  rpc SendNotification (NotificationRequest) returns (NotificationResponse);
+  rpc GetNotificationStats (StatsRequest) returns (StatsResponse);
+}
+
+// 2. โครงสร้าง Request สำหรับส่งการแจ้งเตือน
+message NotificationRequest {
+  string event_type = 1; // "TASK_CREATED", "TASK_UPDATED", "TASK_DELETED"
+  int64 task_id = 2;
+  int64 user_id = 3;
+  string title = 4;
+}
+
+// 3. โครงสร้าง Response ตอบกลับ
+message NotificationResponse {
+  bool success = 1;
+  string message = 2;
+  string sent_at = 3;
+}
+
+// 4. Request/Response สำหรับดูสถิติ
+message StatsRequest {}
+
+message StatsResponse {
+  int64 total_sent = 1;
+}

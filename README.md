@@ -1,11 +1,15 @@
 # 📝 Task Management REST API (Go Zero to Hero)
 
-RESTful API สำหรับจัดการงานแบบ **Multi-User** ระดับ **Enterprise-Grade** พัฒนาด้วย **Gin Web Framework** เชื่อมต่อฐานข้อมูล **PostgreSQL** เสริมความเร็วระดับ **Microseconds ด้วย Redis Cache**, ระบบประมวลผลเบื้องหลัง **Background Worker Pool (Goroutines & Channels)**, ความปลอดภัย **JWT Authentication**, การจัดการ Schema ด้วย **Database Migrations**, เอกสาร **Swagger (OpenAPI) Interactive UI**, และระบบเฝ้าระวังครบวงจร **Observability (Structured Logging `slog` + Prometheus Metrics + Grafana Dashboards)** 🚀⚡📊📈
+RESTful API สำหรับจัดการงานแบบ **Multi-User** ระดับ **Enterprise-Grade** พัฒนาด้วย **Gin Web Framework** เชื่อมต่อฐานข้อมูล **PostgreSQL** เสริมความเร็วระดับ **Microseconds ด้วย Redis Cache**, ระบบประมวลผลเบื้องหลัง **Background Worker Pool (Goroutines & Channels)**, สถาปัตยกรรม **Distributed Microservices ด้วย gRPC & Protocol Buffers**, ความปลอดภัย **JWT Authentication**, การจัดการ Schema ด้วย **Database Migrations**, เอกสาร **Swagger (OpenAPI) Interactive UI**, และระบบเฝ้าระวังครบวงจร **Observability (Structured Logging `slog` + Prometheus Metrics + Grafana Dashboards)** 🚀⚡🌐📊📈
 
 ---
 
 ## ✨ Features
 
+- 🌐 **Microservices Architecture with gRPC & Protocol Buffers**:
+  - แยก Service ออกเป็น **Task API Gateway (:8080)** และ **Notification Microservice (:50051)**
+  - สื่อสารระหว่าง Services ข้ามเครือข่ายด้วย **gRPC บน HTTP/2 Binary Protocol** ที่เร็วกว่า JSON 5–10 เท่า
+  - นิยาม Single Source of Truth Data Contract ด้วย **Protocol Buffers (`.proto`)**
 - 📊 **Full-Stack Observability & Monitoring**:
   - **Structured JSON Logging (`log/slog`)**: บันทึก Log ทุก Request ในรูปแบบ JSON ตามมาตรฐาน Go 1.21+
   - **Prometheus Metrics Exporter**: เก็บสถิติ Request Count, Latency Histogram, และ Worker Jobs ผ่าน Endpoint `/metrics`
@@ -47,36 +51,41 @@ RESTful API สำหรับจัดการงานแบบ **Multi-User*
 
 ```
 1_task-app/
-├── docs/                   # Swagger / OpenAPI Generated Files
-├── metrics/                # Prometheus Metrics Collector & Middleware
+├── cmd/
+│   └── notification-service/ # Notification Microservice (gRPC Server)
+├── proto/
+│   ├── notification.proto    # Protobuf Contract Definition
+│   └── notification/         # Generated Go Protobuf & gRPC Stubs
+├── docs/                     # Swagger / OpenAPI Generated Files
+├── metrics/                  # Prometheus Metrics Collector & Middleware
 ├── migrations/             # Database Schema Migrations (.up.sql / .down.sql)
 ├── models/
-│   ├── user.go             # Data Models สำหรับ User & Auth DTOs
-│   ├── task.go             # Data Models สำหรับ Task & DTOs
-│   └── pagination.go       # DTOs สำหรับ Pagination, Search & Filter
+│   ├── user.go               # Data Models สำหรับ User & Auth DTOs
+│   ├── task.go               # Data Models สำหรับ Task & DTOs
+│   └── pagination.go         # DTOs สำหรับ Pagination, Search & Filter
 ├── repository/
-│   ├── user_repository.go  # PostgreSQL User Repository
-│   ├── task_repository.go  # TaskRepository Interface & In-Memory Storage
+│   ├── user_repository.go    # PostgreSQL User Repository
+│   ├── task_repository.go    # TaskRepository Interface & In-Memory Storage
 │   ├── postgres_task_repository.go # PostgreSQL Dynamic Query Repository
 │   ├── cached_task_repository.go   # Redis Caching Decorator Repository
 │   └── migrations.go       # Migration Runner
 ├── workers/
-│   └── worker_pool.go      # Background Worker Pool (Goroutines & Channels)
+│   └── worker_pool.go        # Background Worker Pool & gRPC Client
 ├── handlers/
-│   ├── auth_handler.go     # Gin HTTP Handlers สำหรับ Register & Login
-│   └── task_handler.go     # Gin HTTP Handlers สำหรับ Tasks CRUD & Worker Enqueue
+│   ├── auth_handler.go       # Gin HTTP Handlers สำหรับ Register & Login
+│   └── task_handler.go       # Gin HTTP Handlers สำหรับ Tasks CRUD & Worker Enqueue
 ├── middleware/
-│   ├── gin_auth.go         # Gin JWT Authentication Middleware
-│   ├── slog_logger.go      # Structured JSON Logger Middleware (log/slog)
+│   ├── gin_auth.go           # Gin JWT Authentication Middleware
+│   ├── slog_logger.go        # Structured JSON Logger Middleware (log/slog)
 │   ├── auth.go             # Context Auth Helper
 │   └── middleware.go       # Legacy Middleware
 ├── utils/
 │   └── auth.go             # Bcrypt Password Hashing & JWT Helpers
-├── prometheus.yml          # Prometheus Scrape Configuration
-├── docker-compose.yml      # Postgres + Redis + Prometheus + Grafana
-├── Dockerfile              # Multi-Stage Dockerfile
+├── prometheus.yml            # Prometheus Scrape Configuration
+├── docker-compose.yml        # Postgres + Redis + Prometheus + Grafana
+├── Dockerfile                # Multi-Stage Dockerfile
 ├── go.mod                  # Go Module Definition
-└── main.go                 # Application Entry Point, Gin Router & Observability
+└── main.go                 # Application Entry Point & Gateway
 ```
 
 ---
@@ -94,16 +103,22 @@ RESTful API สำหรับจัดการงานแบบ **Multi-User*
    docker compose up -d
    ```
 
-2. รันแอปพลิเคชัน Go:
+2. สตาร์ท Notification Microservice (gRPC Server):
+   ```bash
+   go run cmd/notification-service/main.go
+   ```
+
+3. สตาร์ท Task API Gateway (HTTP REST API + gRPC Client):
    ```bash
    go run main.go
    ```
 
-3. จุดเชื่อมต่อบริการต่างๆ:
+4. จุดเชื่อมต่อบริการต่างๆ:
    - 🚀 **REST API Server**: `http://localhost:8080`
    - 📖 **Swagger UI Docs**: `http://localhost:8080/swagger/index.html`
    - 📊 **Prometheus Metrics**: `http://localhost:8080/metrics`
    - 📈 **Grafana Dashboard**: `http://localhost:3000` *(Login: admin / admin)*
+   - 📬 **Notification Microservice (gRPC)**: `localhost:50051`
 
 ---
 

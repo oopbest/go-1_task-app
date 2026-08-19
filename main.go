@@ -76,6 +76,12 @@ func main() {
 	})
 	defer rdb.Close()
 
+	// อ่าน gRPC Service Address จาก ENV (Default: localhost:50051)
+	grpcNotificationAddr := os.Getenv("NOTIFICATION_GRPC_ADDR")
+	if grpcNotificationAddr == "" {
+		grpcNotificationAddr = "localhost:50051"
+	}
+
 	redisCtx, redisCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer redisCancel()
 	if err := rdb.Ping(redisCtx).Err(); err != nil {
@@ -88,8 +94,8 @@ func main() {
 		log.Fatalf("Database migration failed: %v", err)
 	}
 
-	// 4. เริ่มต้น Background Worker Pool (3 Workers, Queue Size 100)
-	workerPool := workers.NewWorkerPool(3, 100)
+	// 4. เริ่มต้น Background Worker Pool (3 Workers, Queue Size 100) พร้อมเชื่อมต่อ gRPC Notification Microservice
+	workerPool := workers.NewWorkerPool(3, 100, grpcNotificationAddr)
 	workerPool.Start()
 
 	// 5. สร้าง Repositories
