@@ -13,11 +13,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
-	_ "github.com/oopbest/task-app/docs" // Swagger Docs ที่ถูก Gen ขึ้นมา
+	_ "github.com/oopbest/task-app/docs"
 	"github.com/oopbest/task-app/handlers"
+	"github.com/oopbest/task-app/metrics"
 	"github.com/oopbest/task-app/middleware"
 	"github.com/oopbest/task-app/repository"
 	"github.com/oopbest/task-app/workers"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -25,7 +27,7 @@ import (
 
 // @title Task Management REST API (Go Zero to Hero)
 // @version 1.0
-// @description API สำหรับจัดการงานแบบ Multi-User พร้อม Redis Caching และ Concurrency Worker Pool
+// @description API สำหรับจัดการงานแบบ Multi-User พร้อม Redis Caching, Worker Pool และ Prometheus Monitoring
 // @host localhost:8080
 // @BasePath /
 
@@ -99,15 +101,20 @@ func main() {
 	authHandler := handlers.NewAuthHandler(userRepo)
 	taskHandler := handlers.NewTaskHandler(cachedTaskRepo, workerPool)
 
-	// 7. ตั้งค่า Gin Router & Middlewares
+	// 7. ตั้งค่า Gin Router & Observability Middlewares
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
 
-	// 8. Swagger Documentation Endpoint
+	// 📊 สวม Structured Logger (slog) + Prometheus Metrics Middleware
+	r.Use(middleware.StructuredLogger(), metrics.PrometheusMiddleware(), gin.Recovery())
+
+	// 8. Prometheus Metrics Endpoint
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
+
+	// 9. Swagger Documentation Endpoint
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	// 9. Health Check
+	// 10. Health Check
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status":   "ok",
@@ -115,18 +122,19 @@ func main() {
 			"cache":    "redis",
 			"workers":  3,
 			"swagger":  "/swagger/index.html",
+			"metrics":  "/metrics",
 			"time":     time.Now().Format(time.RFC3339),
 		})
 	})
 
-	// 10. Public Routes (Auth)
+	// 11. Public Routes (Auth)
 	authGroup := r.Group("/auth")
 	{
 		authGroup.POST("/register", authHandler.Register)
 		authGroup.POST("/login", authHandler.Login)
 	}
 
-	// 11. Protected Routes (Tasks with JWT Auth)
+	// 12. Protected Routes (Tasks with JWT Auth)
 	taskGroup := r.Group("/tasks", middleware.GinAuthMiddleware())
 	{
 		taskGroup.GET("", taskHandler.GetAllTasks)
@@ -136,7 +144,7 @@ func main() {
 		taskGroup.DELETE("/:id", taskHandler.DeleteTask)
 	}
 
-	// 12. ตั้งค่า HTTP Server พร้อม Graceful Shutdown
+	// 13. ตั้งค่า HTTP Server พร้อม Graceful Shutdown
 	server := &http.Server{
 		Addr:         ":" + port,
 		Handler:      r,
@@ -148,6 +156,8 @@ func main() {
 		fmt.Println("==================================================")
 		fmt.Printf("🚀 Gin Task API on http://localhost:%s\n", port)
 		fmt.Printf("📖 Swagger UI on http://localhost:%s/swagger/index.html\n", port)
+		fmt.Printf("📊 Prometheus Metrics on http://localhost:%s/metrics\n", port)
+		fmt.Printf("📈 Grafana Dashboard on http://localhost:3000 (admin/admin)\n")
 		fmt.Println("==================================================")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)

@@ -1,11 +1,15 @@
 # 📝 Task Management REST API (Go Zero to Hero)
 
-RESTful API สำหรับจัดการงานแบบ **Multi-User** ระดับ **Enterprise-Grade** พัฒนาด้วย **Gin Web Framework** เชื่อมต่อฐานข้อมูล **PostgreSQL** เสริมความเร็วระดับ **Microseconds ด้วย Redis Cache**, ระบบประมวลผลเบื้องหลัง **Background Worker Pool (Goroutines & Channels)**, ความปลอดภัย **JWT Authentication**, การจัดการ Schema ด้วย **Database Migrations**, เอกสาร **Swagger (OpenAPI) Interactive UI**, และออกแบบตามหลักการ **Clean Layered Architecture (Decorator Pattern)** 🚀⚡📖
+RESTful API สำหรับจัดการงานแบบ **Multi-User** ระดับ **Enterprise-Grade** พัฒนาด้วย **Gin Web Framework** เชื่อมต่อฐานข้อมูล **PostgreSQL** เสริมความเร็วระดับ **Microseconds ด้วย Redis Cache**, ระบบประมวลผลเบื้องหลัง **Background Worker Pool (Goroutines & Channels)**, ความปลอดภัย **JWT Authentication**, การจัดการ Schema ด้วย **Database Migrations**, เอกสาร **Swagger (OpenAPI) Interactive UI**, และระบบเฝ้าระวังครบวงจร **Observability (Structured Logging `slog` + Prometheus Metrics + Grafana Dashboards)** 🚀⚡📊📈
 
 ---
 
 ## ✨ Features
 
+- 📊 **Full-Stack Observability & Monitoring**:
+  - **Structured JSON Logging (`log/slog`)**: บันทึก Log ทุก Request ในรูปแบบ JSON ตามมาตรฐาน Go 1.21+
+  - **Prometheus Metrics Exporter**: เก็บสถิติ Request Count, Latency Histogram, และ Worker Jobs ผ่าน Endpoint `/metrics`
+  - **Grafana Live Dashboards**: แสดงผลกราฟสถิติ Real-Time บนเว็บ `http://localhost:3000` (admin/admin)
 - 🏎️ **Gin Web Framework & High Performance Routing**:
   - Radix Tree Router ความเร็วสูงและใช้ Memory น้อยที่สุด
   - Route Grouping (`/auth`, `/tasks`) พร้อม Gin Middleware Pipeline
@@ -35,7 +39,7 @@ RESTful API สำหรับจัดการงานแบบ **Multi-User*
   - ป้องกัน SQL Injection ใน `ORDER BY` ด้วย Go Map Whitelist
 - 🧪 **Automated Unit Testing**: เขียน Test ด้วย `testing` และ `net/http/httptest`
 - 🛑 **Graceful Shutdown**: ดักจับ OS Signals ปิดเซิร์ฟเวอร์และเคลียร์ Connections อย่างปลอดภัย
-- 🐳 **Docker Compose & Multi-Stage Build**: รัน PostgreSQL + Redis และบิลด์ Static Binary บน Alpine Linux ขนาดเล็กลงเหลือเพียง **24.5 MB**
+- 🐳 **Docker Compose & Multi-Stage Build**: รัน PostgreSQL + Redis + Prometheus + Grafana ครบวงจร
 
 ---
 
@@ -44,6 +48,7 @@ RESTful API สำหรับจัดการงานแบบ **Multi-User*
 ```
 1_task-app/
 ├── docs/                   # Swagger / OpenAPI Generated Files
+├── metrics/                # Prometheus Metrics Collector & Middleware
 ├── migrations/             # Database Schema Migrations (.up.sql / .down.sql)
 ├── models/
 │   ├── user.go             # Data Models สำหรับ User & Auth DTOs
@@ -62,15 +67,16 @@ RESTful API สำหรับจัดการงานแบบ **Multi-User*
 │   └── task_handler.go     # Gin HTTP Handlers สำหรับ Tasks CRUD & Worker Enqueue
 ├── middleware/
 │   ├── gin_auth.go         # Gin JWT Authentication Middleware
+│   ├── slog_logger.go      # Structured JSON Logger Middleware (log/slog)
 │   ├── auth.go             # Context Auth Helper
-│   └── middleware.go       # Logging & JSON Content-Type Middleware
+│   └── middleware.go       # Legacy Middleware
 ├── utils/
 │   └── auth.go             # Bcrypt Password Hashing & JWT Helpers
-├── docker-compose.yml      # PostgreSQL & Redis Services
+├── prometheus.yml          # Prometheus Scrape Configuration
+├── docker-compose.yml      # Postgres + Redis + Prometheus + Grafana
 ├── Dockerfile              # Multi-Stage Dockerfile
-├── .dockerignore           # Docker ignore rules
 ├── go.mod                  # Go Module Definition
-└── main.go                 # Application Entry Point, Gin Router & Swagger
+└── main.go                 # Application Entry Point, Gin Router & Observability
 ```
 
 ---
@@ -83,7 +89,7 @@ RESTful API สำหรับจัดการงานแบบ **Multi-User*
 
 ### ⚙️ วิธีการติดตั้งและรันเซิร์ฟเวอร์
 
-1. สตาร์ท PostgreSQL Database & Redis Cache:
+1. สตาร์ท Infrastructure ทั้งหมด (PostgreSQL, Redis, Prometheus, Grafana):
    ```bash
    docker compose up -d
    ```
@@ -93,29 +99,11 @@ RESTful API สำหรับจัดการงานแบบ **Multi-User*
    go run main.go
    ```
 
-3. เซิร์ฟเวอร์จะเริ่มต้นทำงานที่: `http://localhost:8080`
-4. เปิดหน้าเว็บ Swagger UI เพื่อทดสอบ API: **`http://localhost:8080/swagger/index.html`**
-
----
-
-## 📡 API Endpoints
-
-### 🔓 Public Endpoints (ไม่ต้องใช้ Token)
-| Method | Endpoint | คำอธิบาย |
-| :--- | :--- | :--- |
-| `GET` | `/health` | ตรวจสอบสถานะ Server, Database, Cache, และ Workers |
-| `GET` | `/swagger/*any` | เอกสาร Interactive Swagger API Documentation |
-| `POST` | `/auth/register` | สมัครสมาชิกใหม่ (รับ `email`, `password`) |
-| `POST` | `/auth/login` | เข้าสู่ระบบเพื่อรับ JWT Token |
-
-### 🔒 Protected Endpoints (ต้องแนบ `Authorization: Bearer <token>`)
-| Method | Endpoint | คำอธิบาย |
-| :--- | :--- | :--- |
-| `GET` | `/tasks` | ดึงรายการ Task (รองรับ `page`, `limit`, `search`, `completed`, `sort`, `order`) |
-| `GET` | `/tasks/{id}` | ดึงรายละเอียด Task ตาม ID (ดึงจาก Redis Cache) |
-| `POST` | `/tasks` | สร้าง Task ใหม่ + ล้าง Cache + โยนเข้า Worker Pool |
-| `PUT` | `/tasks/{id}` | แก้ไข Task + ล้าง Cache + โยนเข้า Worker Pool |
-| `DELETE` | `/tasks/{id}` | ลบ Task + ล้าง Cache + โยนเข้า Worker Pool |
+3. จุดเชื่อมต่อบริการต่างๆ:
+   - 🚀 **REST API Server**: `http://localhost:8080`
+   - 📖 **Swagger UI Docs**: `http://localhost:8080/swagger/index.html`
+   - 📊 **Prometheus Metrics**: `http://localhost:8080/metrics`
+   - 📈 **Grafana Dashboard**: `http://localhost:3000` *(Login: admin / admin)*
 
 ---
 

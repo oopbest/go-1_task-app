@@ -5,6 +5,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/oopbest/task-app/metrics"
 )
 
 // Job โครงสร้างข้อมูลงานเบื้องหลังที่ต้องการให้ Worker นำไปทำ
@@ -77,6 +79,9 @@ func (wp *WorkerPool) processJob(workerID int, job Job) {
 
 	// จำลองเวลาในการทำงานเบื้องหลัง 1.5 วินาที
 	time.Sleep(1500 * time.Millisecond)
+
+	// 📊 บันทึกสถิติงานเข้า Prometheus
+	metrics.WorkerJobsTotal.WithLabelValues(job.Type, "success").Inc()
 
 	log.Printf("✅ [Worker %d] COMPLETED job: [%s] for Task #%d (Notification sent successfully!)\n",
 		workerID, job.Type, job.TaskID)
