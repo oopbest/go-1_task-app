@@ -49,7 +49,7 @@ func main() {
 
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
-		redisAddr = "localhost:6379"
+		redisAddr = "localhost:16379"
 	}
 
 	// 1. เชื่อมต่อ PostgreSQL
@@ -111,8 +111,8 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 
-	// 📊 สวม Structured Logger (slog) + Prometheus Metrics Middleware
-	r.Use(middleware.StructuredLogger(), metrics.PrometheusMiddleware(), gin.Recovery())
+	// 📊 สวม CORS + Structured Logger (slog) + Prometheus Metrics Middleware
+	r.Use(middleware.CORSMiddleware(), middleware.StructuredLogger(), metrics.PrometheusMiddleware(), gin.Recovery())
 
 	// 8. Prometheus Metrics Endpoint
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
