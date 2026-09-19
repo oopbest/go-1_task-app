@@ -24,7 +24,7 @@ services:
     container_name: task-prometheus
     restart: always
     ports:
-      - "9090:9090"
+      - "9990:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     extra_hosts:
