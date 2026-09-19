@@ -80,8 +80,8 @@ definitions:
 host: localhost:8080
 info:
   contact: {}
-  description: API สำหรับจัดการงานแบบ Multi-User พร้อม Redis Caching และ Concurrency
-    Worker Pool
+  description: API สำหรับจัดการงานแบบ Multi-User พร้อม Redis Caching, Worker Pool
+    และ Prometheus Monitoring
   title: Task Management REST API (Go Zero to Hero)
   version: "1.0"
 paths:

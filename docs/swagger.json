@@ -1,7 +1,7 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "API สำหรับจัดการงานแบบ Multi-User พร้อม Redis Caching และ Concurrency Worker Pool",
+        "description": "API สำหรับจัดการงานแบบ Multi-User พร้อม Redis Caching, Worker Pool และ Prometheus Monitoring",
         "title": "Task Management REST API (Go Zero to Hero)",
         "contact": {},
         "version": "1.0"

@@ -642,7 +642,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "Task Management REST API (Go Zero to Hero)",
-	Description:      "API สำหรับจัดการงานแบบ Multi-User พร้อม Redis Caching และ Concurrency Worker Pool",
+	Description:      "API สำหรับจัดการงานแบบ Multi-User พร้อม Redis Caching, Worker Pool และ Prometheus Monitoring",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

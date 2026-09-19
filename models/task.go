@@ -37,13 +37,13 @@ type UpdateTaskInput struct {
 	Completed   *bool   `json:"completed"`
 }
 
-// Validate ตรวจสอบว่ามีการส่งฟิลด์ใดฟิลด์หนึ่งมาอัปเดตหรือไม่
+// Validate ตรวจสอบว่ามีการส่งฟิลด์ใดฟิลด์หนึ่งมาอัปเดตหรือไม่ และ title ต้องไม่เป็นค่าว่าง
 func (input *UpdateTaskInput) Validate() error {
-	if input.Title != nil && strings.TrimSpace(*input.Title) == "" {
-		return errors.New("title is required")
+	if input.Title == nil && input.Description == nil && input.Completed == nil {
+		return errors.New("at least one field (title, description, or completed) must be provided")
 	}
-	if input.Description != nil && strings.TrimSpace(*input.Description) == "" {
-		return errors.New("description is required")
+	if input.Title != nil && strings.TrimSpace(*input.Title) == "" {
+		return errors.New("title cannot be empty")
 	}
 	return nil
 }
